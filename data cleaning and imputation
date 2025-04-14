@@ -1,0 +1,499 @@
+/*有些檔案會出現亂數，像是9999或是其他，需要逐一去排查*/
+data bbb;
+set temp.aaa;
+array orig Medical_History_CHF
+Medical_History_CKD
+Medical_History_HTN
+Medical_History_DM
+Medical_History_CAD
+Medical_History_MI
+Medical_History_Hyper
+Medical_History_AF
+Medical_History_Stroke
+Medical_History_COPD
+Medical_History_PVD
+Medical_History_ICD
+Medical_History_CRT;
+	do i=1 to 13;
+		if orig{i} = 999 then orig{i} = .;
+	end;
+drop i;
+if Height_Weight_BMI = "NIL" then Height_Weight_BMI = .;
+Height_Weight_BMI_num=input(Height_Weight_BMI,comma8.1);
+drop Height_Weight_BMI;
+rename Height_Weight_BMI_num = Height_Weight_BMI;
+if API_SDNN>100 then API_SDNN_normal=0;
+else API_SDNN_normal=API_SDNN;
+/*if Medical_History_AF = 1 then delete;*/
+run;
+
+/*with AF 762, 681, 623*//*without AF 566, 513, 462*/
+data screening v0 v1;
+set bbb;
+if API_Visit = 888 then output screening;    
+else if API_Visit = 0 then output v0;
+else if API_Visit = 1 then output v1;
+run;
+
+%let vars=
+Study_sex
+Study_age
+Height_Weight_Height
+Height_Weight_Weight
+Height_Weight_BMI
+API_Alcohol
+API_Smoking
+Medical_History_CHF
+Medical_History_CKD
+Medical_History_HTN
+Medical_History_DM
+Medical_History_CAD
+Medical_History_MI
+Medical_History_Hyper
+Medical_History_AF
+Medical_History_Stroke
+Medical_History_COPD
+Medical_History_PVD
+Medical_History_ICD
+Medical_History_CRT
+API_HEART_RATE
+API_QRS_DUR
+API_QRInt
+API_S3DisplayValue
+API_S4DisplayValue
+API_QoS1
+API_PercentQoS1
+API_LVSystolicTime
+API_PercentLVSystolic
+API_AccelAtrialFillingTime
+API_PreAtrialDiastolicTime
+API_DiastolicTime
+API_PercentDiastolic
+API_PR_INT
+API_QT_INT
+API_QTC_INT
+API_HeartRate
+API_QoS2
+API_RoS1
+API_S1Intensity
+API_S2Intensity
+API_S3Intensity
+API_S4Intensity
+API_OverallS3Detected
+API_OverallS3S4Summation
+API_OverallS3Score
+API_OverallS4Detected
+API_OverallS4Score
+API_CONF_LAFB
+API_CONF_LBBB
+API_CONF_RBBB
+API_SDI
+Echo_LVEF
+Echo_EDV
+Echo_ESV
+Echo_PWd
+Echo_LVIDd
+Echo_LVIDs
+Echo_IVSd
+Echo_RVSP
+Echo_peakE
+Echo_peakA
+Echo_EA_ratio
+Echo_Ao
+Echo_LAD
+Echo_LAV
+Echo_Mmode
+Echo_Peak_Eprime
+API_SDNN_normal
+API_VL
+API_LF
+API_HF
+API_LF_percent
+API_HF_percent
+API_LF_HF
+Hgb
+Hct
+RBC
+RDW
+WBC
+Platelet
+Neutrophil_bandform
+Neutrophil_Seg
+Lymphocyte
+Monocyte
+Eosinophils
+Basophils
+Albumin
+Creatine_kinase
+Mg
+Cl
+BUN
+Lab_Cholesterol
+Lab_Creatinine
+Lab_HDLC
+Lab_LDLC
+Lab_TG
+Lab_Glucose_nonfasting
+Lab_Glucose_fasting
+Lab_GFR
+Lab_CRP
+Lab_Nt_pro_BNP
+Lab_K
+Lab_Na
+Lab_HbA1c
+Lab_TBILI
+Lab_DBILI
+Lab_Uric_acid
+Lab_TroponinI
+Lab_Troponin_T
+Lab_hsCRP
+Lab_BNP
+Vital_Sign_HR
+Vital_Sign_SBP
+Vital_Sign_DBP
+Vital_Sign_RR
+NYHA_class;
+
+/*計算遺失*/
+%macro frequent(data=, missing=, missing_propor=, total=);
+proc means data=&data nmiss noprint;
+var 
+&vars;
+output out=&missing;
+run;
+
+proc transpose data=&missing(drop=_TYPE_ _FREQ_ )
+out=&missing_propor;
+run;
+
+data &missing_propor;
+set &missing_propor;
+keep _NAME_ COL1 missing missing_proportion;
+missing=&total-COL1;
+missing_proportion=round(((&total-COL1)/&total)*100, 0.01);
+run;
+
+proc export data =&missing_propor
+dbms = xlsx
+outfile = "D:\audicor&HVR\data_renew\&missing_propor" replace;
+run;
+%MEND frequent;
+%frequent(data=screening_final, missing=screening_m, missing_propor=screening_mp, total=566);
+%frequent(data=v0_final, missing=v0_m, missing_propor=v0_mp, total=513);
+%frequent(data=v1_final, missing=v1_m, missing_propor=v1_mp, total=462);
+/*未填補: screening v0 v1
+已填補: screening_final v0_final v1_final*/
+
+/*填補*//*只保留要補的var*/
+%macro keep(data, new_data);
+data &new_data;
+set &data;
+keep Subject_ID  &vars;
+if Subject_ID="" then delete;
+run;
+
+proc sort data=&new_data;
+by Subject_ID;
+run;
+%mend keep;
+%keep(data=screening, new_data=screening_kp);
+%keep(data=v0, new_data=v0_kp);
+%keep(data=v1, new_data=v1_kp);
+
+/*橫向合併*//*更改名字後合併*/
+%macro file_rename(old_data, new_data, var);
+data &new_data ;
+  set &old_data;
+  %macro rename(oldvarlist, suffix);
+  %let k=1;
+  %let old = %scan(&oldvarlist, &k);
+     %do %while("&old" NE "");
+      rename &old = &old.&suffix;
+	  %let k = %eval(&k + 1);
+      %let old = %scan(&oldvarlist, &k);
+  %end;
+  %mend;
+  %rename(&vars, &var);
+run;
+
+proc sort data=&new_data;
+by Subject_ID;
+run;
+%mend file_rename;
+%file_rename(old_data=screening_kp, new_data=screening_rename, var=_sc);
+%file_rename(old_data=v0_kp, new_data=v0_rename, var=_v0);
+%file_rename(old_data=v1_kp, new_data=v1_rename, var=_v1);
+
+data ccc;
+merge screening_rename v0_rename v1_rename;
+by Subject_ID;
+run;
+
+%macro merge(var_1=, var_2=, var_3=);
+data ccc;
+set ccc;
+if &var_1=. then &var_1=&var_2;
+if  &var_1=. then &var_1=&var_3;
+if &var_2=. then &var_2=&var_1;
+if &var_2=. then &var_2=&var_3;
+if &var_3=. then &var_3=&var_2;
+if &var_3=. then &var_3=&var_1;
+run;
+%mend merge;
+/*1*/
+%merge(var_1=Height_Weight_Height_sc, var_2=Height_Weight_Height_v0, var_3=Height_Weight_Height_v1);
+%merge(var_1=Height_Weight_Weight_sc, var_2=Height_Weight_Weight_v0, var_3=Height_Weight_Weight_v1);
+%merge(var_1=Height_Weight_BMI_sc, var_2=Height_Weight_BMI_v0, var_3=Height_Weight_BMI_v1);
+/*4*/
+%merge(var_1=API_S4DisplayValue_sc, var_2=API_S4DisplayValue_v0, var_3=API_S4DisplayValue_v1);
+%merge(var_1=API_S3DisplayValue_sc, var_2=API_S3DisplayValue_v0, var_3=API_S3DisplayValue_v1);
+%merge(var_1=API_QRS_DUR_sc, var_2=API_QRS_DUR_v0, var_3=API_QRS_DUR_v1);
+%merge(var_1=API_QoS1_sc, var_2=API_QoS1_v0, var_3=API_QoS1_v1);
+%merge(var_1=API_PercentQoS1_sc, var_2=API_PercentQoS1_v0, var_3=API_PercentQoS1_v1);
+%merge(var_1=API_LVSystolicTime_sc, var_2=API_LVSystolicTime_v0, var_3=API_LVSystolicTime_v1);
+%merge(var_1=API_PercentLVSystolic_sc, var_2=API_PercentLVSystolic_v0, var_3=API_PercentLVSystolic_v1);
+%merge(var_1=API_DiastolicTime_sc, var_2=API_DiastolicTime_v0, var_3=API_DiastolicTime_v1);
+%merge(var_1=API_PercentDiastolic_sc, var_2=API_PercentDiastolic_v0, var_3=API_PercentDiastolic_v1);
+%merge(var_1=API_SDI_sc, var_2=API_SDI_v0, var_3=API_SDI_v1);
+/*5*/
+%merge(var_1=Echo_LVEF_sc, var_2=Echo_LVEF_v0, var_3=Echo_LVEF_v1);
+%merge(var_1=Echo_EDV_sc, var_2=Echo_EDV_v0, var_3=Echo_EDV_v1);
+%merge(var_1=Echo_ESV_sc, var_2=Echo_ESV_v0, var_3=Echo_ESV_v1);
+%merge(var_1=Echo_PWd_sc, var_2=Echo_PWd_v0, var_3=Echo_PWd_v1);
+%merge(var_1=Echo_LVIDd_sc, var_2=Echo_LVIDd_v0, var_3=Echo_LVIDd_v1);
+%merge(var_1=Echo_LVIDs_sc, var_2=Echo_LVIDs_v0, var_3=Echo_LVIDs_v1);
+%merge(var_1=Echo_IVSd_sc, var_2=Echo_IVSd_v0, var_3=Echo_IVSd_v1);
+%merge(var_1=Echo_RVSP_sc, var_2=Echo_RVSP_v0, var_3=Echo_RVSP_v1);
+%merge(var_1=Echo_peakE_sc, var_2=Echo_peakE_v0, var_3=Echo_peakE_v1);
+%merge(var_1=Echo_peakA_sc, var_2=Echo_peakA_v0, var_3=Echo_peakA_v1);
+%merge(var_1=Echo_EA_ratio_sc, var_2=Echo_EA_ratio_v0, var_3=Echo_EA_ratio_v1);
+%merge(var_1=Echo_Ao_sc, var_2=Echo_Ao_v0, var_3=Echo_Ao_v1);
+%merge(var_1=Echo_LAD_sc, var_2=Echo_LAD_v0, var_3=Echo_LAD_v1);
+%merge(var_1=Echo_LAV_sc, var_2=Echo_LAV_v0, var_3=Echo_LAV_v1);
+%merge(var_1=Echo_Mmode_sc, var_2=Echo_Mmode_v0, var_3=Echo_Mmode_v1);
+%merge(var_1=Echo_Peak_Eprime_sc, var_2=Echo_Peak_Eprime_v0, var_3=Echo_Peak_Eprime_v1);
+/*6*/
+%merge(var_1=API_SDNN_normal_sc, var_2=API_SDNN_normal_v0, var_3=API_SDNN_normal_v1);
+%merge(var_1=API_VL_sc, var_2=API_VL_v0, var_3=API_VL_v1);
+%merge(var_1=API_LF_sc, var_2=API_LF_v0, var_3=API_LF_v1);
+%merge(var_1=API_HF_sc, var_2=API_HF_v0, var_3=API_HF_v1);
+%merge(var_1=API_LF_percent_sc, var_2=API_LF_percent_v0, var_3=API_LF_percent_v1);
+%merge(var_1=API_HF_percent_sc, var_2=API_HF_percent_v0, var_3=API_HF_percent_v1);
+%merge(var_1=API_LF_HF_sc, var_2=API_LF_HF_v0, var_3=API_LF_HF_v1);
+/*7*/
+%merge(var_1=Hgb_sc, var_2=Hgb_v0, var_3=Hgb_v1);
+%merge(var_1=Hct_sc, var_2=Hct_v0, var_3=Hct_v1);
+%merge(var_1=RBC_sc, var_2=RBC_v0, var_3=RBC_v1);
+%merge(var_1=RDW_sc, var_2=RDW_v0, var_3=RDW_v1);
+%merge(var_1=WBC_sc, var_2=WBC_v0, var_3=WBC_v1);
+%merge(var_1=Platelet_sc, var_2=Platelet_v0, var_3=Platelet_v1);
+%merge(var_1=Neutrophil_bandform_sc, var_2=Neutrophil_bandform_v0, var_3=Neutrophil_bandform_v1);
+%merge(var_1=Neutrophil_Seg_sc, var_2=Neutrophil_Seg_v0, var_3=Neutrophil_Seg_v1);
+%merge(var_1=Lymphocyte_sc, var_2=Lymphocyte_v0, var_3=Lymphocyte_v1);
+%merge(var_1=Monocyte_sc, var_2=Monocyte_v0, var_3=Monocyte_v1);
+%merge(var_1=Eosinophils_sc, var_2=Eosinophils_v0, var_3=Eosinophils_v1);
+%merge(var_1=Basophils_sc, var_2=Basophils_v0, var_3=Basophils_v1);
+%merge(var_1=Albumin_sc, var_2=Albumin_v0, var_3=Albumin_v1);
+%merge(var_1=Creatine_kinase_sc, var_2=Creatine_kinase_v0, var_3=Creatine_kinase_v1);
+%merge(var_1=Mg_sc, var_2=Mg_v0, var_3=Mg_v1);
+%merge(var_1=Cl_sc, var_2=Cl_v0, var_3=Cl_v1);
+%merge(var_1=BUN_sc, var_2=BUN_v0, var_3=BUN_v1);
+%merge(var_1=Lab_Cholesterol_sc, var_2=Lab_Cholesterol_v0, var_3=Lab_Cholesterol_v1);
+%merge(var_1=Lab_Creatinine_sc, var_2=Lab_Creatinine_v0, var_3=Lab_Creatinine_v1);
+%merge(var_1=Lab_HDLC_sc, var_2=Lab_HDLC_v0, var_3=Lab_HDLC_v1);
+%merge(var_1=Lab_LDLC_sc, var_2=Lab_LDLC_v0, var_3=Lab_LDLC_v1);
+%merge(var_1=Lab_TG_sc, var_2=Lab_TG_v0, var_3=Lab_TG_v1);
+%merge(var_1=Lab_Glucose_nonfasting_sc, var_2=Lab_Glucose_nonfasting_v0, var_3=Lab_Glucose_nonfasting_v1);
+%merge(var_1=Lab_Glucose_fasting_sc, var_2=Lab_Glucose_fasting_v0, var_3=Lab_Glucose_fasting_v1);
+%merge(var_1=Lab_GFR_sc, var_2=Lab_GFR_v0, var_3=Lab_GFR_v1);
+%merge(var_1=Lab_CRP_sc, var_2=Lab_CRP_v0, var_3=Lab_CRP_v1);
+%merge(var_1=Lab_Nt_pro_BNP_sc, var_2=Lab_Nt_pro_BNP_v0, var_3=Lab_Nt_pro_BNP_v1);
+%merge(var_1=Lab_K_sc, var_2=Lab_K_v0, var_3=Lab_K_v1);
+%merge(var_1=Lab_Na_sc, var_2=Lab_Na_v0, var_3=Lab_Na_v1);
+%merge(var_1=Lab_HbA1c_sc, var_2=Lab_HbA1c_v0, var_3=Lab_HbA1c_v1);
+%merge(var_1=Lab_TBILI_sc, var_2=Lab_TBILI_v0, var_3=Lab_TBILI_v1);
+%merge(var_1=Lab_DBILI_sc, var_2=Lab_DBILI_v0, var_3=Lab_DBILI_v1);
+%merge(var_1=Lab_Uric_acid_sc, var_2=Lab_Uric_acid_v0, var_3=Lab_Uric_acid_v1);
+%merge(var_1=Lab_TroponinI_sc, var_2=Lab_TroponinI_v0, var_3=Lab_TroponinI_v1);
+%merge(var_1=Lab_Troponin_T_sc, var_2=Lab_Troponin_T_v0, var_3=Lab_Troponin_T_v1);
+%merge(var_1=Lab_hsCRP_sc, var_2=Lab_hsCRP_v0, var_3=Lab_hsCRP_v1);
+%merge(var_1=Lab_BNP_sc, var_2=Lab_BNP_v0, var_3=Lab_BNP_v1);
+/*8*/
+%merge(var_1=Vital_Sign_HR_sc, var_2=Vital_Sign_HR_v0, var_3=Vital_Sign_HR_v1);
+%merge(var_1=Vital_Sign_SBP_sc, var_2=Vital_Sign_SBP_v0, var_3=Vital_Sign_SBP_v1);
+%merge(var_1=Vital_Sign_DBP_sc, var_2=Vital_Sign_DBP_v0, var_3=Vital_Sign_DBP_v1);
+%merge(var_1=Vital_Sign_RR_sc, var_2=Vital_Sign_RR_v0, var_3=Vital_Sign_RR_v1);
+
+proc transpose data=ccc out=ddd;
+run; 
+
+data Subject_ID;
+set ccc;
+keep Subject_ID;
+run;
+
+data screening_merge v0_merge v1_merge;
+set  ddd;
+if index(_NAME_, "_sc") > 0 then output screening_merge;
+else if index(_NAME_, "_v0") > 0 then output v0_merge;
+else if index(_NAME_, "_v1") > 0 then output v1_merge;
+RUN;
+
+/*補完的檔案結尾為final*//*再計算一次遺失比例*/
+%macro changename(data=, new_data=, height=, normal=, original=, Subject_ID=, final=);
+data &data;
+set &data;
+if _LABEL_='' then _LABEL_=_NAME_;
+run;
+
+proc transpose data=&data out=&new_data(rename=(&height=Height_Weight_BMI &normal=API_SDNN_normal));
+ID _LABEL_;
+run;
+
+data &new_data;
+merge Subject_ID &new_data;
+drop _NAME_;
+run;
+
+data &Subject_ID;
+set &original;
+keep Subject_ID;
+run;
+
+proc sql;
+create table &final as
+select a.*, b.*
+from &Subject_ID a
+inner join &new_data b
+on a.Subject_ID = b.Subject_ID;
+quit;
+
+%mend changename;
+%changename(data=screening_merge, new_data=screening_merge_back, height=Height_Weight_BMI_sc, normal=API_SDNN_normal_sc, original=screening, Subject_ID=screening_id, final=screening_final);
+%changename(data=v0_merge, new_data=v0_merge_back, height=Height_Weight_BMI_v0, normal=API_SDNN_normal_v0, original=v0, Subject_ID=v0_id, final=v0_final);
+%changename(data=v1_merge, new_data=v1_merge_back, height=Height_Weight_BMI_v1, normal=API_SDNN_normal_v1, original=v1, Subject_ID=v1_id, final=v1_final);
+
+/*補完後missing比例<=30%的變項用中位數填補*/
+%let filled_below30=
+Height_Weight_Height
+Height_Weight_Weight
+Height_Weight_BMI
+API_S3DisplayValue
+API_S4DisplayValue
+Echo_PWd
+Echo_Mmode
+Echo_LVIDs
+Echo_LVIDd
+Echo_LAD
+Echo_IVSd
+Echo_Ao
+API_SDNN_normal
+API_VL
+API_LF
+API_HF
+API_LF_percent
+API_HF_percent
+API_LF_HF
+Hgb
+Hct
+RBC
+RDW
+WBC
+Platelet
+Lymphocyte
+Monocyte
+Eosinophils
+Basophils
+Lab_Creatinine
+Lab_K
+Lab_Na
+Vital_Sign_HR
+Vital_Sign_SBP
+Vital_Sign_DBP
+Vital_Sign_RR
+;
+
+%macro fill_median(data=);
+proc stdize data=&data reponly method=median out=&data ;
+var &filled_below30 ;
+run;
+%mend fill_median;
+%fill_median(data=screening_final);
+%fill_median(data=v0_final);
+%fill_median(data=v1_final);
+
+/*描述性統計(已填補與未填補)*/
+%let dis=
+Study_sex
+Medical_History_HTN
+Medical_History_DM
+Medical_History_CAD
+Medical_History_CHF
+NYHA_class;
+
+%let cont=
+Study_age
+Height_Weight_BMI
+Vital_Sign_SBP
+Vital_Sign_DBP
+Vital_Sign_HR
+Lab_Nt_pro_BNP
+Echo_LAD
+Echo_LVIDs
+Echo_LVIDd
+Echo_EDV
+Echo_ESV
+Echo_LVEF
+Echo_Mmode
+Echo_peakE
+Echo_peakA
+Echo_EA_ratio
+API_QRS_DUR
+API_QoS1
+API_PercentQoS1
+API_LVSystolicTime
+API_PercentLVSystolic
+API_DiastolicTime
+API_PercentDiastolic
+API_S3DisplayValue
+API_S4DisplayValue
+API_SDI
+API_SDNN_normal
+API_VL
+API_LF
+API_HF
+API_LF_percent
+API_HF_percent
+API_LF_HF;
+
+%macro discription(data=, out=, tran_out=);
+ods exclude all;
+proc means data=&data mean;
+var &cont;
+output out=&out;
+run;
+ods exclude none;
+
+proc transpose data=&out out=&tran_out;
+run;
+data &tran_out;
+set &tran_out;
+mean=round(COL4, 0.01);
+sd=round(COL5, 0.01);
+keep _NAME_ mean sd;
+run;
+
+proc export data =&tran_out
+dbms = xlsx
+outfile = "D:\audicor&HVR\data_renew\&tran_out" replace;
+run;
+
+proc freq data=&data;
+table &dis;
+run;
+%mend discription;
+%discription(data=screening_final, out=discription_screening, tran_out=dtran_screening);
+%discription(data=v0_final, out=discription_v0, tran_out=dtran_v0);
+%discription(data=v1_final, out=discription_v1, tran_out=dtran_v1);
+/*已填補: screening_final v0_final v1_final
+未填補: screening v0 v1*/
