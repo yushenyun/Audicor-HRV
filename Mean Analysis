@@ -1,0 +1,91 @@
+/*均數分析*/
+%macro stat_ttest(new_data, table, stat, ttest);
+/*計算為0以及為1的比例*/
+proc freq data=&new_data;
+table &table;
+run;
+
+ods exclude all;
+ods output Statistics=&stat TTests=&ttest;
+proc ttest data=&new_data;
+class &table;
+var &cont;
+run;
+ods output close;
+ods exclude none;
+
+%macro dis(var);
+proc sort data=&new_data;
+by &var;
+run;
+proc freq data=&new_data;
+by &var;
+table &table/ chisq;
+run;
+%mend dis;
+%dis(Study_sex);
+%dis(Medical_History_HTN);
+%dis(Medical_History_DM);
+%dis(Medical_History_CAD);
+%dis(Medical_History_CHF);
+%dis(NYHA_class);
+
+%mend stat_ttest;
+%stat_ttest(new_data=screening_final, table=SDI, stat=screening_stat, ttest=screening_ttest);
+%stat_ttest(new_data=v0_final, table=SDI, stat=v0_stat, ttest=v0_ttest);
+%stat_ttest(new_data=v1_final, table=SDI, stat=v1_stat, ttest=v1_ttest);
+/*table : QRS EF EMAT EMATP S3 S4 SDNN SDI*/
+
+/*將連續型匯出成表格*//*離散型從output*/
+%macro ttest_stat(data_ttest, data_stat);
+data &data_ttest;
+set &data_ttest;
+if Method='Satterthwaite' then delete;
+keep Variable Probt;
+run;
+
+proc export data =&data_ttest
+dbms = xlsx
+outfile = "D:\audicor&HVR\data_renew\&data_ttest" replace;
+run;
+
+data &data_stat;
+set &data_stat;
+if Method='Satterthwaite'| '集區' then delete;
+if Class='差異 (1-2)' then delete;
+mean_round=round(mean, 0.01);
+std_round=round(StdDev, 0.01);
+keep Variable Class mean_round std_round;
+run;
+
+proc sort data=&data_stat;
+by Class;
+run;
+
+proc export data =&data_stat
+dbms = xlsx
+outfile = "D:\audicor&HVR\data_renew\&data_stat" replace;
+run;
+%mend ttest_stat;
+%ttest_stat(data_ttest=screening_ttest, data_stat=screening_stat);
+%ttest_stat(data_ttest=v0_ttest, data_stat=v0_stat);
+%ttest_stat(data_ttest=v1_ttest, data_stat=v1_stat);
+
+/*將補值後的檔案合併回去*/
+%macro combine(combine, original, final);
+proc sql;
+create table &combine as
+select a.*, b.*
+from &original a
+right join &final b
+on a.Subject_ID = b.Subject_ID;
+quit;
+%mend combine;
+%combine(combine=screening_com, original=screening, final=screening_final);
+%combine(combine=v0_com, original=v0, final=v0_final);
+%combine(combine=v1_com, original=v1, final=v1_final);
+
+/*補值後的完整檔案*/
+data last;
+set screening_com v0_com v1_com;
+run;
