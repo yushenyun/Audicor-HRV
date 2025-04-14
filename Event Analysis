@@ -1,0 +1,145 @@
+/*事件分析(CV_ADHF)*/
+data last;
+set last;
+if CV_death = 1| ADHF = 1 then CV_ADHF = 1;
+else if missing(CV_death) & missing(ADHF) then CV_ADHF = .;
+else CV_ADHF=0;
+if CV_death = 1| ADHF = 1| nonfetal_MI = 1| nonfetal_stroke = 1 then cardio_events=1;
+else if missing(CV_death) & missing(ADHF) & missing(nonfetal_MI) & missing(nonfetal_stroke) then cardio_events = .;
+else cardio_events=0;
+ADHF_DT_scan=scan(End_Point_ADHF_DT1,1,' ');
+nonfetal_MI_DT_scan=scan(End_Point_nonfetal_MI_DT1,1,' ');
+array old End_Point_CV_death_DT ADHF_DT_scan nonfetal_MI_DT_scan;
+array new CV_death_DT_int ADHF_DT_scan_int nonfetal_MI_DT_scan_int;
+	do i= 1 to 3;
+	new{i}=mdy(scan(old{i}, 1, '/'), scan(old{i}, 2, '/'), scan(old{i}, 3, '/'));
+	end;
+nonfetal_stroke_DT_int=datepart(End_Point_nonfetal_stroke_DT1);
+CV_ADHF_DT_int=min(ADHF_DT_scan_int, CV_death_DT_int);
+cardio_events_DT_int=min(CV_death_DT_int, ADHF_DT_scan_int, nonfetal_MI_DT_scan_int, nonfetal_stroke_DT_int);
+if API_Visit= 888 then API_Visit= .;
+Discharge_date_DT_int=mdy(scan(Discharge_date, 1, '/'), scan(Discharge_date, 2, '/'), scan(Discharge_date, 3, '/'));
+array var CV_death_DT_int ADHF_DT_scan_int CV_ADHF_DT_int cardio_events_DT_int;
+array time time_CV_death time_ADHF time_CV_ADHF time_cardio_events;
+	do j= 1 to 4;
+	if var{j}=. then var{j}=mdy('5', '29', '2023');
+	time{j}= var{j}-Discharge_date_DT_int;
+	if time{j}<0 then delete;
+	end;
+drop i j;
+run;
+/*使用均數分析的程式，將table 改為 : End_Point_CV_death End_Point_ADHF1 CV_ADHF cardio_events*/
+
+/*取得每位病患的最後一個測量值*/
+proc sort data=last;
+by Subject_ID descending API_Visit;
+run;
+proc sort data=last nodupkey;
+by Subject_ID;
+run;
+
+/*將資料匯入python*/
+data intoPython;
+set last;
+API_Date_char = mdy(scan(API_Date, 1, '/'), scan(API_Date, 2, '/'), scan(API_Date, 3, '/'));
+array  event CV_death ADHF CV_ADHF cardio_events;
+	do i=1 to 4;
+	if event{i}=. then event{i}=0;
+end;
+run;
+
+data intoPython(keep=CV_death ADHF CV_ADHF cardio_events &vars );
+set intoPython;
+run;
+
+proc export data= intoPython
+outfile= "D:\audicor&HVR\data_renew\intoPython.csv"
+dbms=csv;
+run;
+
+/*將API_Visit換回來888*/
+/*combine NYHA functional classification */
+/*take API_VL API_LF API_HF API_LF_percent API_HF_percent API_LF_HF in LN*/
+data last;
+set last;
+if API_Visit= . then API_Visit= 888;
+if NYHA_class = 1 | NYHA_class = 2 then NYHA=0;
+else if NYHA_class = 3 | NYHA_class = 4 then NYHA=1;
+else if NYHA_class = . then NYHA=.;
+Subject+1; 
+   array old API_VL API_LF API_HF API_LF_percent API_HF_percent API_LF_HF;
+   array new ln_API_VL ln_API_LF ln_API_HF ln_API_LF_percent ln_API_HF_percent ln_API_LF_HF;
+   		do i = 1 to dim(old);
+		new{i} = log(old{i});
+	end;
+drop i;
+run;
+
+/*事件分析*/
+%macro stat_ttest(new_data, table, stat, ttest);
+/*計算為0以及為1的比例*/
+proc freq data=&new_data;
+table &table;
+run;
+
+ods exclude all;
+ods output Statistics=&stat TTests=&ttest;
+proc ttest data=&new_data;
+class &table;
+var &cont;
+run;
+ods output close;
+ods exclude none;
+
+%macro dis(var);
+proc sort data=&new_data;
+by &var;
+run;
+proc freq data=&new_data;
+by &var;
+table &table/ chisq;
+run;
+%mend dis;
+%dis(Study_sex);
+%dis(Medical_History_HTN);
+%dis(Medical_History_DM);
+%dis(Medical_History_CAD);
+%dis(Medical_History_CHF);
+%dis(NYHA_class);
+
+%mend stat_ttest;
+%stat_ttest(new_data=last, table=CARDIO_EVENTS, stat=event_stat, ttest=event_ttest);
+/*table : CV_ADHF CV_death ADHF CARDIO_EVENTS*/
+
+/*將連續型匯出成表格*//*離散型從output*/
+%macro ttest_stat(data_ttest, data_stat);
+data &data_ttest;
+set &data_ttest;
+if Method='Satterthwaite' then delete;
+keep Variable Probt;
+run;
+
+proc export data =&data_ttest
+dbms = xlsx
+outfile = "D:\audicor&HVR\data_renew\&data_ttest" replace;
+run;
+
+data &data_stat;
+set &data_stat;
+if Method='Satterthwaite'| '集區' then delete;
+if Class='差異 (1-2)' then delete;
+mean_round=round(mean, 0.01);
+std_round=round(StdDev, 0.01);
+keep Variable Class mean_round std_round;
+run;
+
+proc sort data=&data_stat;
+by Class;
+run;
+
+proc export data =&data_stat
+dbms = xlsx
+outfile = "D:\audicor&HVR\data_renew\&data_stat" replace;
+run;
+%mend ttest_stat;
+%ttest_stat(data_ttest=event_ttest, data_stat=event_stat);
