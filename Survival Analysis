@@ -1,0 +1,70 @@
+/*存活分析*/
+proc sort data=last;
+by Subject_ID;
+run;
+proc transpose data=last 
+   out=long1(rename=(Col1=Value)) name=Account;                    
+   by Subject;                   /** for each subject **/
+   var &cont ln_API_VL ln_API_LF ln_API_HF ln_API_LF_percent ln_API_HF_percent ln_API_LF_HF; /*make a row for these variables*/
+run;
+data long;
+merge long1 
+      last(keep=Subject 
+           time_CV_ADHF CV_ADHF time_CV_death CV_death time_ADHF ADHF time_cardio_events cardio_events); /* these variables are not transposed*/
+by Subject; 
+run;
+proc sort data=long;
+by account;
+run;
+
+%macro phreg(time=, censor=, CorrelationEstimate=);
+proc freq data=last;
+table &censor;
+run;
+
+ods exclude all;
+proc phreg data=long;
+by account;
+model &time*&censor(0)=Value / RISKLIMITS;
+ods output parameterestimates = &CorrelationEstimate;
+run;
+ods exclude none;
+
+proc export data =&CorrelationEstimate
+dbms = xlsx
+outfile = "D:\audicor&HVR\data_renew\&CorrelationEstimate" replace;
+run;
+
+/*Medical_History_CHF ref=1*/
+proc phreg data=last;
+class Medical_History_CHF(param=ref ref='1');
+model &time*&censor(0)=Medical_History_CHF / RISKLIMITS;
+run;
+
+/*plot*/
+%macro dis_phreg(var=);
+proc phreg data=last /*plots(overlay)=survival*/;
+class &var(param=ref ref='0');
+model &time*&censor(0)=&var / RISKLIMITS;
+/*baseline survival=s /diradj group=S3;*/
+run;
+%mend dis_phreg;
+%dis_phreg(var=Study_sex);
+%dis_phreg(var=Medical_History_HTN);
+%dis_phreg(var=Medical_History_DM);
+%dis_phreg(var=Medical_History_CAD);
+%dis_phreg(var=NYHA);
+%dis_phreg(var=EF);
+%dis_phreg(var=QRS);
+%dis_phreg(var=EMAT);
+%dis_phreg(var=EMATP);
+%dis_phreg(var=S3);
+%dis_phreg(var=S4);
+%dis_phreg(var=SDI);
+%dis_phreg(var=SDNN);
+
+%mend phreg;
+%phreg(time=time_CV_ADHF, censor=CV_ADHF, CorrelationEstimate=result_CV_ADHF);
+%phreg(time=time_CV_death, censor=CV_death, CorrelationEstimate=result_CV_DEATH);
+%phreg(time=time_ADHF, censor=ADHF, CorrelationEstimate=result_ADHF);
+%phreg(time=time_cardio_events, censor=cardio_events, CorrelationEstimate=result_cardio);
