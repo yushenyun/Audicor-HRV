@@ -1,0 +1,55 @@
+libname temp"D:\audicor&HVR\data_renew";
+
+/*proc import out= temp.Eventsassessment
+datafile= "D:\audicor&HVR\data_renew\HF10. Events assessment.xlsx"
+dbms=xlsx REPLACE;
+getnames=YES;
+run;*/
+
+PROC SQL;
+  CREATE TABLE Eventsassessment AS
+  SELECT *, max(End_Point_CV_death) AS CV_death, max(End_Point_ADHF1) AS ADHF, max(End_Point_nonfetal_MI1) AS nonfetal_MI, max(End_Point_nonfetal_stroke1) AS nonfetal_stroke
+  FROM temp.Eventsassessment
+  GROUP BY Subject_ID;
+QUIT;
+proc sort data=Eventsassessment ;
+by Subject_ID descending End_Point_CV_death_DT descending End_Point_ADHF_DT1 descending End_Point_nonfetal_MI_DT1 descending End_Point_nonfetal_stroke_DT1;
+run;
+proc sort data=Eventsassessment nodupkey;
+by Subject_ID;
+run;
+
+/*Audicorhrv的Subject_ID最齊全要放第一個*/
+PROC SQL;
+create table aaa as
+   SELECT a.*, b.*, c.*, d.*, j.*, k.*, l.*, m.*, n.*, o.*
+   FROM temp.Audicorhrv a
+   LEFT JOIN  temp.Heightweight b
+   ON a.Subject_ID = b.Subject_ID and a.API_Visit = b.High_Weight_visit
+   LEFT JOIN temp.Nyhaclass c
+   ON a.Subject_ID = c.Subject_ID and a.API_Visit = c.NYHA_visit
+   LEFT JOIN temp.Medicalhistory d
+   ON a.Subject_ID = d.Subject_ID and a.API_Visit = d.Medical_History_visit   
+	LEFT JOIN temp.Vitalsign j
+   ON a.Subject_ID = j.Subject_ID and a.API_Visit = j.Vital_Sign_visit
+   LEFT JOIN temp.Echocardiography k
+   ON a.Subject_ID = k.Subject_ID and a.API_Visit = k.Echo_visit
+   LEFT JOIN temp.Laboratory l
+   ON a.Subject_ID = l.Subject_ID and a.API_Visit = l.Lab_visit
+   LEFT JOIN temp.Demongraphy m
+   ON a.Subject_ID = m.Subject_ID
+   LEFT JOIN temp.Dischargedate n
+   ON a.Subject_ID = n.Subject_ID
+   LEFT JOIN Eventsassessment o
+   ON a.Subject_ID = o.Subject_ID;
+QUIT;
+
+data temp.aaa;
+set aaa;
+drop Visit_Date Test_Battery Order_Filled_Out Version;
+run;
+
+/*全部資料合併:aaa*/
+proc sort data=temp.aaa nodupkey;
+by Subject_ID Medical_History_visit High_Weight_visit NYHA_visit Vital_Sign_visit Echo_visit Lab_visit API_Visit;
+run;
