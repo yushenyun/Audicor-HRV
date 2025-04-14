@@ -1,3 +1,9 @@
+## propose
+Trying to track down acute heart failure patients
+1.to understand the characteristic of Audicor(AUDICOR is an acoustic cardiography system that analyses heart sounds to assess cardiac function.) and heart rate variability with or without cardiovascular
+2.to see if Audicor and heart rate variability are able to be come the indicator of disease risk
+
+
 ## :one: Data combination
 combine all the data sets
 
